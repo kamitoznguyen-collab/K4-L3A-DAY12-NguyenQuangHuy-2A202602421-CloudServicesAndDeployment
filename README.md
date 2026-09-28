@@ -1,3 +1,48 @@
+# Day 12 Agent — AI agent chạy production, public qua HTTPS
+
+[![CI](https://github.com/kamitoznguyen-collab/K4-L3A-DAY12-NguyenQuangHuy-2A202602421-Cloud-Service-And-Deployment/actions/workflows/ci.yml/badge.svg)](https://github.com/kamitoznguyen-collab/K4-L3A-DAY12-NguyenQuangHuy-2A202602421-Cloud-Service-And-Deployment/actions/workflows/ci.yml)
+
+Bài làm Lab Day 12 của **Nguyễn Quang Huy — 2A202602421**. Public URL và kết quả
+kiểm tra thật: [DEPLOYMENT.md](DEPLOYMENT.md).
+
+```
+Internet ─HTTPS─► Cloudflare ─► cloudflared ─► nginx ─► agent × 2 ─► Redis
+                                (tunnel)        (LB)     (FastAPI)    (state)
+```
+
+| Thành phần | Làm gì |
+|---|---|
+| `app/` | FastAPI: `/ask`, `/history`, `/usage`, `/health`, `/ready`, giao diện chat tại `/` |
+| Bảo vệ | API key (constant-time) → rate limit sliding window nguyên tử trên Redis → cost guard theo tháng |
+| Vận hành | log JSON một dòng + request id, SIGTERM tắt êm, stateless nên scale ngang được |
+| `docker-compose.yml` | Redis + 2 replica agent + nginx; profile `public` thêm Cloudflare Tunnel |
+| `scripts/` | `smoke_test.py` kiểm tra end-to-end một bản đang chạy · `public_url.py` lấy URL tunnel |
+| CI/CD | lint → test (Redis thật, 3 phiên bản Python) → build + test Docker + smoke test → release image GHCR |
+
+### Chạy nhanh
+
+```bash
+cp .env.example .env        # rồi đặt AGENT_API_KEY bằng khóa ngẫu nhiên của bạn
+docker compose --profile public up -d --build
+python scripts/public_url.py --write     # in URL HTTPS công khai, ghi vào DEPLOYMENT.md
+python scripts/smoke_test.py http://localhost:8000
+```
+
+### Kiểm thử
+
+```bash
+pytest tests/ -m "not docker" --ignore=tests/test_cp5.py --ignore=tests/test_bonus_cicd.py
+REDIS_TEST_URL=redis://127.0.0.1:6379/15 pytest tests/integration   # cần Redis thật
+pytest tests/ -m docker                                              # cần Docker
+python grade.py
+```
+
+`tests/test_cp*.py` là bộ test chấm điểm của lab (giữ nguyên). `tests/unit/` và
+`tests/integration/` là test bổ sung cho từng checkpoint: case biên, bảo mật,
+race condition giữa nhiều instance, SIGTERM thật vào container.
+
+---
+
 # K4 — Level 3A, Ngày 12: Hạ Tầng Cloud & Deployment (240 phút)
 
 Đưa một AI agent từ `localhost:8000` lên một địa chỉ công khai mà người khác

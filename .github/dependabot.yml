@@ -1,0 +1,16 @@
+# Tự mở pull request khi action, thư viện Python hoặc base image có bản mới —
+# CI ở trên sẽ chạy trên từng PR đó trước khi merge.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
