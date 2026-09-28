@@ -1,6 +1,6 @@
 # Day 12 Agent — AI agent chạy production, public qua HTTPS
 
-[![CI](https://github.com/kamitoznguyen-collab/K4-L3A-DAY12-NguyenQuangHuy-2A202602421-Cloud-Service-And-Deployment/actions/workflows/ci.yml/badge.svg)](https://github.com/kamitoznguyen-collab/K4-L3A-DAY12-NguyenQuangHuy-2A202602421-Cloud-Service-And-Deployment/actions/workflows/ci.yml)
+[![CI](https://github.com/kamitoznguyen-collab/K4-L3A-DAY12-NguyenQuangHuy-2A202602421-CloudServicesAndDeployment/actions/workflows/ci.yml/badge.svg)](https://github.com/kamitoznguyen-collab/K4-L3A-DAY12-NguyenQuangHuy-2A202602421-CloudServicesAndDeployment/actions/workflows/ci.yml)
 
 Bài làm Lab Day 12 của **Nguyễn Quang Huy — 2A202602421**. Public URL và kết quả
 kiểm tra thật: [DEPLOYMENT.md](DEPLOYMENT.md).

@@ -10,7 +10,7 @@
 |-----|----------|
 | Họ và tên | Nguyễn Quang Huy |
 | Mã học viên | 2A202602421 |
-| Repo | https://github.com/kamitoznguyen-collab/K4-L3A-DAY12-NguyenQuangHuy-2A202602421-Cloud-Service-And-Deployment |
+| Repo | https://github.com/kamitoznguyen-collab/K4-L3A-DAY12-NguyenQuangHuy-2A202602421-CloudServicesAndDeployment |
 
 ## Service
 
