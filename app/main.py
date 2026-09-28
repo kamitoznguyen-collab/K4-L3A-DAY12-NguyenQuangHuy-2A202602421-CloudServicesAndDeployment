@@ -13,10 +13,12 @@ Luồng một request tới /ask:
 
 from __future__ import annotations
 
+import time
+import uuid
 from contextlib import asynccontextmanager
 from functools import lru_cache
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -65,6 +67,53 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Day 12 Production Agent", version=SERVICE_VERSION, lifespan=lifespan)
 
+REQUEST_ID_HEADER = "X-Request-ID"
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    """Gắn request id, security header và ghi một dòng access log JSON.
+
+    Request id lấy từ header client/proxy gửi lên nếu có (để nối log giữa
+    nginx và app), ngược lại tự sinh. Log KHÔNG chứa header nào của request —
+    trong đó có X-API-Key.
+    """
+    request_id = request.headers.get(REQUEST_ID_HEADER) or uuid.uuid4().hex
+    request_id = request_id[:64]
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception as err:  # lỗi không lường trước: log lại, trả 500 gọn gàng
+        log_event(
+            "unhandled_error",
+            level="error",
+            request_id=request_id,
+            path=request.url.path,
+            error=f"{type(err).__name__}: {err}",
+        )
+        response = JSONResponse(
+            status_code=500,
+            content={"detail": "internal server error", "request_id": request_id},
+        )
+
+    response.headers[REQUEST_ID_HEADER] = request_id
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    log_event(
+        "http_request",
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path,
+        status=response.status_code,
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
+    return response
+
 
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
@@ -77,17 +126,13 @@ class AskRequest(BaseModel):
 def health():
     """Liveness probe — process còn sống không?
 
-    TODO (CP1 + CP4):
-      - Đang tắt dần (``lifecycle.shutting_down``) → trả
-        ``JSONResponse(status_code=503, content={"status": "shutting_down"})``
-      - Bình thường → ``{"status": "ok", "service": SERVICE_NAME,
-        "version": SERVICE_VERSION}`` (mặc định FastAPI trả 200).
-
     Endpoint này phải **nhẹ**: không gọi Redis, không query DB. Nó chỉ trả
     lời câu hỏi "có cần restart container này không?". Nếu nó phụ thuộc
     Redis, Redis chết một nhịp là cả cụm container bị restart theo.
     """
-    raise NotImplementedError("TODO (CP1/CP4): cài đặt /health")
+    if lifecycle.shutting_down:
+        return JSONResponse(status_code=503, content={"status": "shutting_down"})
+    return {"status": "ok", "service": SERVICE_NAME, "version": SERVICE_VERSION}
 
 
 @app.get("/ready")
