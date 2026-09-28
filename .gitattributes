@@ -1,0 +1,5 @@
+# Mọi file text lưu LF trong repo và khi checkout — script/config chạy trong
+# container Linux sẽ hỏng nếu dính CRLF từ Windows.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
