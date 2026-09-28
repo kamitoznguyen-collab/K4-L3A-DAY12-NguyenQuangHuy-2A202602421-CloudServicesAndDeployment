@@ -16,6 +16,7 @@ from .config import get_settings
 
 HISTORY_MAX_MESSAGES = 20
 HISTORY_TTL_SECONDS = 7 * 24 * 3600
+REDIS_TIMEOUT_SECONDS = 2.0
 
 
 def get_redis_client(url: str | None = None):
@@ -30,7 +31,15 @@ def get_redis_client(url: str | None = None):
         import fakeredis
 
         return fakeredis.FakeRedis(decode_responses=True)
-    return redis.from_url(url, decode_responses=True)
+    # Timeout ngắn: Redis treo thì /ready trả 503 trong ~2 giây, thay vì treo
+    # theo và làm probe của platform timeout.
+    return redis.from_url(
+        url,
+        decode_responses=True,
+        socket_connect_timeout=REDIS_TIMEOUT_SECONDS,
+        socket_timeout=REDIS_TIMEOUT_SECONDS,
+        health_check_interval=30,
+    )
 
 
 class ConversationStore:
@@ -47,33 +56,31 @@ class ConversationStore:
     def ping(self) -> bool:
         """Redis có trả lời không? Dùng cho endpoint /ready.
 
-        TODO (CP4): gọi ``self.client.ping()`` trong try/except.
-        Trả ``True`` nếu thành công, ``False`` nếu có bất kỳ Exception nào
-        (mất mạng, sai mật khẩu, Redis chưa khởi động...).
+        Bắt mọi Exception (mất mạng, sai mật khẩu, Redis chưa khởi động...):
+        /ready phải trả 503 có kiểm soát, không được để lỗi thành 500.
         """
-        raise NotImplementedError("TODO (CP4): cài đặt ping")
+        try:
+            return bool(self.client.ping())
+        except Exception:  # noqa: BLE001 — mọi lỗi đều nghĩa là "chưa sẵn sàng"
+            return False
 
     def append(self, user_id: str, role: str, content: str) -> None:
-        """Ghi thêm một lượt vào lịch sử.
+        """Ghi thêm một lượt vào lịch sử, chỉ giữ HISTORY_MAX_MESSAGES lượt mới nhất.
 
-        TODO (CP4):
-          1. ``self.client.rpush(key, json.dumps({"role": role, "content": content},
-             ensure_ascii=False))``
-          2. ``self.client.ltrim(key, -HISTORY_MAX_MESSAGES, -1)`` — chỉ giữ
-             ``HISTORY_MAX_MESSAGES`` message gần nhất, nếu không prompt sẽ
-             phình vô hạn và tiền token cũng vậy.
-          3. ``self.client.expire(key, HISTORY_TTL_SECONDS)`` — hội thoại cũ
-             tự hết hạn, khỏi phải dọn tay.
+        RPUSH + LTRIM + EXPIRE chạy trong một transaction: không container nào
+        đọc được trạng thái "đã thêm nhưng chưa cắt", và key luôn có TTL.
         """
-        raise NotImplementedError("TODO (CP4): cài đặt append")
+        key = self._key(user_id)
+        entry = json.dumps({"role": role, "content": content}, ensure_ascii=False)
+        pipe = self.client.pipeline(transaction=True)
+        pipe.rpush(key, entry)
+        pipe.ltrim(key, -HISTORY_MAX_MESSAGES, -1)
+        pipe.expire(key, HISTORY_TTL_SECONDS)
+        pipe.execute()
 
     def get_history(self, user_id: str) -> list[dict]:
-        """Đọc lịch sử hội thoại, cũ nhất trước.
-
-        TODO (CP4): ``self.client.lrange(key, 0, -1)`` rồi ``json.loads``
-        từng phần tử. Chưa có gì → trả về list rỗng.
-        """
-        raise NotImplementedError("TODO (CP4): cài đặt get_history")
+        """Đọc lịch sử hội thoại, cũ nhất trước; chưa có gì → list rỗng."""
+        return [json.loads(item) for item in self.client.lrange(self._key(user_id), 0, -1)]
 
     def clear(self, user_id: str) -> None:
         """CHO SẴN — xóa lịch sử của một user."""

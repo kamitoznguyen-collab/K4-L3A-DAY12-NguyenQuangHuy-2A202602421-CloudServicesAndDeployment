@@ -13,6 +13,7 @@ Luồng một request tới /ask:
 
 from __future__ import annotations
 
+import socket
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -42,18 +43,24 @@ SERVICE_VERSION = "1.0.0"
 # app.dependency_overrides, và để kết nối Redis chỉ tạo khi thật sự cần.
 # ─────────────────────────────────────────────────────────────
 @lru_cache(maxsize=1)
+def get_redis():
+    """Một connection pool dùng chung cho store, limiter và cost guard."""
+    return get_redis_client()
+
+
+@lru_cache(maxsize=1)
 def get_store() -> ConversationStore:
-    return ConversationStore(get_redis_client())
+    return ConversationStore(get_redis())
 
 
 @lru_cache(maxsize=1)
 def get_rate_limiter() -> RateLimiter:
-    return RateLimiter(get_redis_client(), get_settings().rate_limit_per_minute)
+    return RateLimiter(get_redis(), get_settings().rate_limit_per_minute)
 
 
 @lru_cache(maxsize=1)
 def get_cost_guard() -> CostGuard:
-    return CostGuard(get_redis_client(), get_settings().monthly_budget_usd)
+    return CostGuard(get_redis(), get_settings().monthly_budget_usd)
 
 
 @asynccontextmanager
@@ -77,6 +84,9 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Day 12 Production Agent", version=SERVICE_VERSION, lifespan=lifespan)
 
 REQUEST_ID_HEADER = "X-Request-ID"
+# Container nào đã xử lý request — nhìn header này là thấy load balancer đang
+# chia request qua các replica (và lịch sử vẫn liền mạch nhờ Redis).
+INSTANCE_ID = socket.gethostname()
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -97,7 +107,7 @@ async def request_context(request: Request, call_next):
     started = time.perf_counter()
     try:
         response = await call_next(request)
-    except Exception as err:  # lỗi không lường trước: log lại, trả 500 gọn gàng
+    except Exception as err:  # noqa: BLE001 — catch-all có chủ đích: log rồi trả 500 gọn
         log_event(
             "unhandled_error",
             level="error",
@@ -111,6 +121,7 @@ async def request_context(request: Request, call_next):
         )
 
     response.headers[REQUEST_ID_HEADER] = request_id
+    response.headers["X-Served-By"] = INSTANCE_ID
     for name, value in SECURITY_HEADERS.items():
         response.headers.setdefault(name, value)
     log_event(
@@ -148,15 +159,15 @@ def health():
 def ready(store: ConversationStore = Depends(get_store)):
     """Readiness probe — đã sẵn sàng nhận traffic chưa?
 
-    TODO (CP4):
-      - Đang tắt dần → 503 ``{"status": "shutting_down"}``
-      - ``store.ping()`` False → 503 ``{"status": "not ready", "redis": False}``
-      - Ngược lại → ``{"status": "ready", "redis": True}``
-
     Khác /health ở chỗ: endpoint này ĐƯỢC PHÉP kiểm tra dependency. Load
-    balancer dùng nó để quyết định có đẩy request vào instance này không.
+    balancer dùng nó để quyết định có đẩy request vào instance này không;
+    Redis chết thì instance tạm rời vòng xoay, nhưng KHÔNG bị restart.
     """
-    raise NotImplementedError("TODO (CP4): cài đặt /ready")
+    if lifecycle.shutting_down:
+        return JSONResponse(status_code=503, content={"status": "shutting_down"})
+    if not store.ping():
+        return JSONResponse(status_code=503, content={"status": "not ready", "redis": False})
+    return {"status": "ready", "redis": True}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -200,6 +211,27 @@ def ask(
         "cost_usd": result["cost_usd"],
         "tokens": {"in": result["tokens_in"], "out": result["tokens_out"]},
     }
+
+
+@app.get("/history")
+def history(
+    user_id: str = Depends(verify_api_key),
+    store: ConversationStore = Depends(get_store),
+):
+    """Lịch sử hội thoại của user (tối đa HISTORY_MAX_MESSAGES lượt gần nhất)."""
+    messages = store.get_history(user_id)
+    return {"user_id": user_id, "messages": messages, "count": len(messages)}
+
+
+@app.delete("/history")
+def clear_history(
+    user_id: str = Depends(verify_api_key),
+    store: ConversationStore = Depends(get_store),
+):
+    """Xóa lịch sử hội thoại — bắt đầu cuộc trò chuyện mới."""
+    store.clear(user_id)
+    log_event("history_cleared", user_id=user_id)
+    return {"user_id": user_id, "cleared": True}
 
 
 @app.get("/usage")

@@ -1,0 +1,38 @@
+[tool.pytest.ini_options]
+markers = [
+    "docker: test cần Docker đang chạy, tự bỏ qua nếu không có",
+    "integration: test cần Redis thật qua REDIS_TEST_URL",
+]
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
+
+[tool.coverage.run]
+source = ["app", "utils"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = ["pragma: no cover", "if __name__ == .__main__.:"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Chỉ lint code của mình; test chấm điểm và grade.py của lab giữ nguyên bản gốc
+extend-exclude = [".venv", "grade.py", "tests/conftest.py", "tests/test_cp*.py", "tests/test_bonus_cicd.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "BLE"]
+ignore = [
+    "S101",  # assert trong test là bình thường
+    "S104",  # bind 0.0.0.0 là chủ ý: service chạy trong container
+    "B008",  # Depends()/Header() trong default arg là idiom của FastAPI
+    "UP017", # giữ timezone.utc cho đồng bộ với code lab cho sẵn
+]
+
+[tool.ruff.lint.isort]
+known-local-folder = ["docker_helpers"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "BLE", "E501"]

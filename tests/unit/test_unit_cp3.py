@@ -229,9 +229,9 @@ class TestAskFlow:
         self, client_factory, fake_redis, auth_headers, llm_calls
     ):
         from app.cost_guard import CostGuard
-        from tests.conftest import StubStore
+        from app.store import ConversationStore
 
-        store = StubStore()
+        store = ConversationStore(fake_redis)
         client = client_factory(store=store, budget=1.0)
         fake_redis.set(CostGuard._key("sv-test"), "1.5")
 

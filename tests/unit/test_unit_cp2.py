@@ -13,18 +13,9 @@ import subprocess
 import pytest
 import yaml
 
-IMAGE_TAG = "day12-agent:unit-test"
+from docker_helpers import needs_docker
+
 NGINX_IMAGE_RE = re.compile(r"image:\s*(nginx:\S+)")
-
-
-def docker_available() -> bool:
-    try:
-        return subprocess.run(["docker", "info"], capture_output=True, timeout=30).returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return False
-
-
-needs_docker = pytest.mark.skipif(not docker_available(), reason="Docker chưa chạy")
 
 
 @pytest.fixture(scope="module")
@@ -120,18 +111,7 @@ class TestCompose:
         assert ":" in image and not image.endswith(":latest")
 
     def test_nginx_la_cua_vao_duy_nhat(self, compose):
-        assert "8000:80" in compose["services"]["nginx"]["ports"]
-
-
-@pytest.fixture(scope="module")
-def image(repo_root):
-    """Build image một lần cho cả module (layer cache làm lần sau rất nhanh)."""
-    result = subprocess.run(
-        ["docker", "build", "-q", "-t", IMAGE_TAG, "."],
-        cwd=repo_root, capture_output=True, text=True, timeout=900,
-    )
-    assert result.returncode == 0, result.stderr[-2000:]
-    return IMAGE_TAG
+        assert compose["services"]["nginx"]["ports"] == ["${HOST_PORT:-8000}:80"]
 
 
 @pytest.mark.docker
@@ -156,24 +136,24 @@ class TestDockerThat:
         )
         assert result.returncode == 0, result.stderr
 
-    def test_chay_bang_user_thuong(self, image):
+    def test_chay_bang_user_thuong(self, docker_image):
         result = subprocess.run(
-            ["docker", "run", "--rm", "--entrypoint", "id", image],
+            ["docker", "run", "--rm", "--entrypoint", "id", docker_image],
             capture_output=True, text=True, timeout=60,
         )
         assert result.stdout.startswith("uid=10001(app)")
 
-    def test_image_khong_chua_env_va_test(self, image):
+    def test_image_khong_chua_env_va_test(self, docker_image):
         result = subprocess.run(
-            ["docker", "run", "--rm", "--entrypoint", "ls", image, "-A", "/app"],
+            ["docker", "run", "--rm", "--entrypoint", "ls", docker_image, "-A", "/app"],
             capture_output=True, text=True, timeout=60,
         )
         assert sorted(result.stdout.split()) == ["app", "utils"]
 
-    def test_thieu_api_key_thi_container_chet_ngay(self, image):
+    def test_thieu_api_key_thi_container_chet_ngay(self, docker_image):
         """Fail fast: không có AGENT_API_KEY → thoát với mã lỗi, không âm thầm chạy."""
         result = subprocess.run(
-            ["docker", "run", "--rm", image],
+            ["docker", "run", "--rm", docker_image],
             capture_output=True, text=True, timeout=60,
         )
         output = result.stdout + result.stderr
