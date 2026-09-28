@@ -172,34 +172,56 @@ def ask(
 ):
     """Hỏi agent một câu.
 
-    TODO (CP3 + CP4) — làm ĐÚNG THỨ TỰ sau:
-      1. ``limiter.check(user_id)``           → 429 nếu gọi quá nhanh
-      2. ``guard.check(user_id)``             → 402 nếu hết ngân sách
-      3. ``history = store.get_history(user_id)``
-      4. ``result = ask_llm(payload.question, history)``
-      5. ``store.append(user_id, "user", payload.question)`` và
-         ``store.append(user_id, "assistant", result["answer"])``
-      6. ``guard.record(user_id, result["cost_usd"])``
-      7. ``log_event("ask_completed", user_id=user_id,
-         tokens_in=result["tokens_in"], tokens_out=result["tokens_out"],
-         cost_usd=result["cost_usd"])``
-      8. trả về::
-
-            {
-                "answer": result["answer"],
-                "user_id": user_id,
-                "history_length": len(history),
-                "cost_usd": result["cost_usd"],
-                "tokens": {"in": result["tokens_in"], "out": result["tokens_out"]},
-            }
-
-    Vì sao check trước rồi mới gọi LLM? Vì tiền mất ở bước gọi LLM. Chặn sau
-    khi đã gọi thì bạn vừa trả tiền vừa trả lỗi.
-
-    ``user_id`` do ``verify_api_key`` trả về, nên request không có API key
-    hợp lệ sẽ dừng ở 401 trước khi chạm vào bất cứ dòng nào ở đây.
+    Thứ tự: 401 (verify_api_key, trong Depends) → 429 → 402 → gọi LLM → lưu
+    lịch sử → ghi chi phí → log. Mọi bước chặn đều nằm TRƯỚC lời gọi LLM, vì
+    tiền mất ở bước đó: chặn sau khi đã gọi là vừa trả tiền vừa trả lỗi.
     """
-    raise NotImplementedError("TODO (CP3/CP4): cài đặt /ask")
+    limiter.check(user_id)
+    guard.check(user_id)
+
+    history = store.get_history(user_id)
+    result = ask_llm(payload.question, history)
+
+    store.append(user_id, "user", payload.question)
+    store.append(user_id, "assistant", result["answer"])
+    guard.record(user_id, result["cost_usd"])
+
+    log_event(
+        "ask_completed",
+        user_id=user_id,
+        tokens_in=result["tokens_in"],
+        tokens_out=result["tokens_out"],
+        cost_usd=result["cost_usd"],
+    )
+    return {
+        "answer": result["answer"],
+        "user_id": user_id,
+        "history_length": len(history),
+        "cost_usd": result["cost_usd"],
+        "tokens": {"in": result["tokens_in"], "out": result["tokens_out"]},
+    }
+
+
+@app.get("/usage")
+def usage(
+    user_id: str = Depends(verify_api_key),
+    limiter: RateLimiter = Depends(get_rate_limiter),
+    guard: CostGuard = Depends(get_cost_guard),
+):
+    """Quota còn lại của user: chi tiêu tháng này và số request trong 60 giây.
+
+    Chỉ đọc, không tính vào rate limit — xem quota không được làm tốn quota.
+    """
+    spent = guard.spent(user_id)
+    return {
+        "user_id": user_id,
+        "month": guard.current_month(),
+        "spent_usd": round(spent, 8),
+        "budget_usd": guard.budget,
+        "remaining_usd": round(guard.remaining(user_id), 8),
+        "rate_limit_per_minute": limiter.limit,
+        "requests_last_minute": limiter.hit_count(user_id),
+    }
 
 
 if __name__ == "__main__":

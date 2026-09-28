@@ -28,32 +28,43 @@ class RateLimiter:
         return f"ratelimit:{user_id}"
 
     def hit_count(self, user_id: str, now: float | None = None) -> int:
-        """Số request của user trong ``WINDOW_SECONDS`` giây gần nhất.
-
-        TODO (CP3):
-          1. ``now = now if now is not None else time.time()``
-          2. Xóa các entry cũ hơn cửa sổ:
-             ``self.client.zremrangebyscore(key, 0, now - WINDOW_SECONDS)``
-          3. Trả về ``self.client.zcard(key)``
-        """
-        raise NotImplementedError("TODO (CP3): cài đặt hit_count")
+        """Số request của user trong ``WINDOW_SECONDS`` giây gần nhất."""
+        now = now if now is not None else time.time()
+        key = self._key(user_id)
+        self.client.zremrangebyscore(key, 0, now - WINDOW_SECONDS)
+        return int(self.client.zcard(key))
 
     def check(self, user_id: str, now: float | None = None) -> None:
         """Cho qua nếu còn quota, ngược lại raise 429.
 
-        TODO (CP3):
-          1. ``now = now if now is not None else time.time()``
-          2. Gọi ``self.hit_count(user_id, now)``.
-          3. Nếu số đó ``>= self.limit`` → raise
-             ``HTTPException(status_code=429, detail="rate limit exceeded",
-                             headers={"Retry-After": str(WINDOW_SECONDS)})``
-          4. Chưa vượt → ghi nhận request này:
-             ``self.client.zadd(key, {f"{now}:{uuid.uuid4().hex}": now})``
-             (member phải là chuỗi DUY NHẤT, nếu không hai request cùng
-             timestamp sẽ ghi đè nhau và bạn đếm thiếu)
-             rồi ``self.client.expire(key, WINDOW_SECONDS)`` để key tự dọn.
+        Cách làm "đếm rồi mới ghi" (đếm → nếu chưa đủ thì ZADD) đúng khi chỉ
+        có một process, nhưng khi scale nhiều instance thì hai request đồng
+        thời cùng đếm thấy 9/10, cùng ghi, và user lọt qua 11 request.
 
-        Lưu ý thứ tự: **kiểm tra trước, ghi nhận sau**. Ghi trước rồi mới đếm
-        sẽ chặn nhầm ngay ở request thứ ``limit``.
+        Ở đây dọn cửa sổ + ghi + đếm nằm trong MỘT transaction (MULTI/EXEC),
+        nên mỗi request thấy đúng vị trí của mình trong hàng đợi. Vượt hạn mức
+        thì xóa lại chính entry vừa ghi (request bị từ chối không chiếm quota)
+        rồi trả 429. Kết quả: không bao giờ vượt ``limit``, kể cả khi nhiều
+        container cùng ghi vào một Redis.
+
+        Member là ``timestamp:uuid`` — phải duy nhất, nếu không hai request
+        cùng timestamp ghi đè nhau trong ZSET và bị đếm thiếu.
         """
-        raise NotImplementedError("TODO (CP3): cài đặt check")
+        now = now if now is not None else time.time()
+        key = self._key(user_id)
+        member = f"{now}:{uuid.uuid4().hex}"
+
+        pipe = self.client.pipeline(transaction=True)
+        pipe.zremrangebyscore(key, 0, now - WINDOW_SECONDS)
+        pipe.zadd(key, {member: now})
+        pipe.zcard(key)
+        pipe.expire(key, WINDOW_SECONDS)
+        _, _, count, _ = pipe.execute()
+
+        if count > self.limit:
+            self.client.zrem(key, member)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="rate limit exceeded",
+                headers={"Retry-After": str(WINDOW_SECONDS)},
+            )
