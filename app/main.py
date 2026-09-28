@@ -18,9 +18,11 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from functools import lru_cache
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from utils.mock_llm import ask_llm
@@ -92,6 +94,14 @@ SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
 }
+# Trang chat chỉ được tải script/style từ chính origin này: kể cả khi có lỗi
+# XSS, trình duyệt cũng không chạy script lạ và không gửi dữ liệu đi nơi khác.
+# (/docs dùng Swagger UI từ CDN nên không gắn CSP này.)
+UI_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; img-src 'self' data:; connect-src 'self'; "
+    "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+)
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 @app.middleware("http")
@@ -124,6 +134,8 @@ async def request_context(request: Request, call_next):
     response.headers["X-Served-By"] = INSTANCE_ID
     for name, value in SECURITY_HEADERS.items():
         response.headers.setdefault(name, value)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers.setdefault("Content-Security-Policy", UI_CONTENT_SECURITY_POLICY)
     log_event(
         "http_request",
         request_id=request_id,
@@ -137,6 +149,18 @@ async def request_context(request: Request, call_next):
 
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
+
+
+# ─────────────────────────────────────────────────────────────
+# Giao diện web
+# ─────────────────────────────────────────────────────────────
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    """Trang chat. Trang này công khai; mọi thao tác vẫn cần API key."""
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 # ─────────────────────────────────────────────────────────────

@@ -23,3 +23,11 @@ Thumbs.db
 
 # Tài liệu nội bộ của giảng viên — không đẩy lên repo phát cho học viên
 solution/
+
+# Test & lint artifacts
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Cấu hình cục bộ của công cụ AI/editor
+.claude/

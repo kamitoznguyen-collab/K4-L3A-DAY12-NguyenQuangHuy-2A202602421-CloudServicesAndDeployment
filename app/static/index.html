@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Day 12 Agent</title>
+  <meta name="description" content="AI agent chạy production: API key, rate limit, cost guard, stateless trên Redis.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">◆</span>
+      <div>
+        <h1>Day 12 Agent</h1>
+        <p class="subtitle">Production AI agent · FastAPI · Redis · Cloudflare</p>
+      </div>
+    </div>
+    <div class="status" id="status" data-state="checking" title="Trạng thái /ready">
+      <span class="dot"></span><span id="status-text">Đang kiểm tra…</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="chat" aria-label="Hội thoại">
+      <div class="messages" id="messages" aria-live="polite">
+        <div class="empty" id="empty">
+          <h2>Hỏi agent bất cứ điều gì</h2>
+          <p>Lịch sử hội thoại lưu ở Redis nên vẫn liền mạch dù mỗi câu hỏi có thể
+             được một container khác trả lời — xem nhãn <code>replica</code> dưới mỗi câu trả lời.</p>
+        </div>
+      </div>
+
+      <form class="composer" id="composer">
+        <textarea id="question" name="question" rows="1" maxlength="2000"
+                  placeholder="Nhập câu hỏi… (Enter để gửi, Shift+Enter xuống dòng)" required></textarea>
+        <button type="submit" id="send">Gửi</button>
+      </form>
+    </section>
+
+    <aside class="panel" aria-label="Cài đặt và hạn mức">
+      <form class="card" id="settings">
+        <h3>Kết nối</h3>
+        <label for="api-key">API key</label>
+        <div class="row">
+          <input id="api-key" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="Dán X-API-Key">
+          <button type="button" class="ghost" id="toggle-key" aria-label="Hiện/ẩn key">👁</button>
+        </div>
+        <label for="user-id">User ID</label>
+        <input id="user-id" type="text" maxlength="64" spellcheck="false"
+               pattern="[A-Za-z0-9_.@\-]{1,64}" title="1–64 ký tự: chữ, số, _ . @ -">
+        <p class="hint">Key chỉ lưu trong trình duyệt của bạn và chỉ gửi tới chính service này.</p>
+        <button type="submit">Lưu</button>
+      </form>
+
+      <div class="card">
+        <h3>Hạn mức <span class="muted" id="usage-month"></span></h3>
+        <div class="meter">
+          <div class="meter-label"><span>Chi phí tháng</span><span id="usage-cost">—</span></div>
+          <div class="bar"><span id="usage-cost-bar"></span></div>
+        </div>
+        <div class="meter">
+          <div class="meter-label"><span>Request / 60 giây</span><span id="usage-rate">—</span></div>
+          <div class="bar"><span id="usage-rate-bar"></span></div>
+        </div>
+        <button type="button" class="ghost danger" id="clear">Xóa lịch sử hội thoại</button>
+      </div>
+
+      <details class="card">
+        <summary>Dùng qua API</summary>
+        <pre><code id="curl-example"></code></pre>
+        <p class="hint">Tài liệu OpenAPI: <a href="/docs">/docs</a></p>
+      </details>
+    </aside>
+  </main>
+
+  <template id="message-template">
+    <article class="message">
+      <div class="bubble"></div>
+      <div class="meta"></div>
+    </article>
+  </template>
+</body>
+</html>

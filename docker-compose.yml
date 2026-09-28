@@ -96,6 +96,12 @@ services:
       - http://nginx:80
     ports:
       - "127.0.0.1:2000:2000"
+    # DNS nội bộ của Docker vẫn phân giải tên `nginx`; truy vấn ra ngoài (SRV
+    # record của argotunnel.com) đi thẳng tới 1.1.1.1 thay vì resolver của
+    # máy host — resolver một số nhà mạng trả lỗi với SRV làm tunnel chết lúc start.
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
     depends_on:
       nginx:
         condition: service_healthy
